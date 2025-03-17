@@ -1,4 +1,3 @@
-# api/index.py
 from flask import Flask, request, jsonify
 import json
 import re
@@ -33,19 +32,17 @@ def parse_products_text(products, text):
         
         op = {}
         
-        # Check if the number of products discovered matches the number of quantities extracted
+        # Check if number of products doesn't match quantities
         if len(productindex) != len(qtfound):
-            # Mismatch detected - set flag to 1
             op['flag'] = 1
-            
-            # Still assign quantities to products as far as possible
+            # Still assign quantities as far as possible
             for i in range(len(productindex)):
                 if i < len(qtfound):
                     op[productindex[i][0]] = qtfound[i]
                 else:
-                    op[productindex[i][0]] = "unknown quantity"  # For products without matching quantities
+                    op[productindex[i][0]] = "unknown quantity"
         else:
-            # No mismatch - assign quantities and set flag to 0
+            # Everything matched correctly
             for i in range(len(productindex)):
                 op[productindex[i][0]] = qtfound[i]
             op['flag'] = 0
