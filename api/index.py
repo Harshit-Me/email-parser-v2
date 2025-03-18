@@ -60,7 +60,7 @@ def parse_products_text(products, text):
             if i < len(qtfound):
                 op[productindex[i][0]] = qtfound[i]
             else:
-                op[productindex[i][0]] = "unknown quantity"
+                op[productindex[i][0]] = -1
     else:
         op = {'flag': 1, 'reason': 'No products matched in the text'}
     
