@@ -12,55 +12,100 @@ app = Flask(__name__)
 def parse_products_text(products, text):
     productindex = []
     for product in products:
-        alignment = partial_ratio_alignment(product, text, processor=utils.default_process, score_cutoff=90)
-        if alignment is not None:
-            dest_start = alignment.dest_start
-            dest_end = alignment.dest_end
-            productindex.append((product, dest_start, dest_end))
-
-    # Check for duplicate products by removing first instance and looking for another
-    duplicate_products = []
-    for product, start, end in productindex:
-        # Create text with this product's first occurrence removed
-        modified_text = text[:start] + " " * (end - start + 1) + text[end+1:]
+        # Find all instances of each product in the text
+        alignments = []
+        search_text = text
+        start_offset = 0
         
-        # Try to find the product again in the modified text
-        second_match = partial_ratio_alignment(product, modified_text, processor=utils.default_process, score_cutoff=90)
-        if second_match is not None:
-            duplicate_products.append(product)
-
-    def remove_substrings(text, removals):
-        removals_sorted = sorted(removals, key=lambda x: x[1], reverse=True)
-        for substring, start, end in removals_sorted:
-            text = text[:start] + text[end+1:]
-        return text
-
+        while True:
+            alignment = partial_ratio_alignment(product, search_text, processor=utils.default_process, score_cutoff=90)
+            if alignment is None:
+                break
+                
+            actual_start = alignment.dest_start + start_offset
+            actual_end = alignment.dest_end + start_offset
+            alignments.append((actual_start, actual_end))
+            
+            # Update search text and offset for next iteration
+            search_text = search_text[:alignment.dest_start] + ' ' * (alignment.dest_end - alignment.dest_start + 1) + search_text[alignment.dest_end+1:]
+            start_offset += alignment.dest_end + 1
+        
+        # Add all found instances to productindex
+        for start, end in alignments:
+            productindex.append((product, start, end))
+    
+    op = {}
+    
     if productindex:
-        text = remove_substrings(text, productindex)
-        quantpattern = r'\d{1,6} units|\d{1,6} pack|\d{1,6} meter|\d{1,6} kilogram|\d{1,6} l|\d{1,6} liter|\d{1,6} g|\d{1,6} m|\d{1,6} kg|\d{1,6} ml'
-        qtfound = re.findall(quantpattern, text)
+        # Sort by position in text
         productindex.sort(key=lambda x: x[1])
         
-        op = {}
+        # Check for duplicate products
+        product_names = [p[0] for p in productindex]
+        product_counts = Counter(product_names)
+        duplicate_products = [p for p, count in product_counts.items() if count > 1]
         
-        # Prioritize duplicate product error over quantity mismatch
+        # Create a copy of the text for quantity extraction
+        working_text = text
+        
+        # Extract all quantities in order
+        quantpattern = r'\d{1,6} units|\d{1,6} pack|\d{1,6} meter|\d{1,6} kilogram|\d{1,6} l|\d{1,6} liter|\d{1,6} g|\d{1,6} m|\d{1,6} kg|\d{1,6} ml'
+        quantities = re.findall(quantpattern, working_text)
+        
+        # Create product-quantity pairs based on order in text
+        product_quantity_pairs = []
+        unique_products = []
+        
+        # Match products with quantities in order
+        for product, _, _ in productindex:
+            if len(quantities) > 0:
+                product_quantity_pairs.append((product, quantities.pop(0)))
+            else:
+                product_quantity_pairs.append((product, "unknown quantity"))
+                
+            # Track unique products (for duplicate detection)
+            if product not in unique_products:
+                unique_products.append(product)
+        
+        # Assemble the output
         if duplicate_products:
+            # Flag duplicates but keep correct quantity assignments
             op['flag'] = 1
             duplicate_str = ", ".join(duplicate_products)
             op['reason'] = f"duplicate found: {duplicate_str}"
-        # Then check quantity mismatch
-        elif len(productindex) != len(qtfound):
+            
+            # Remove duplicate product-quantity pairs while preserving correct assignments
+            seen_products = set()
+            unique_pairs = []
+            
+            for product, quantity in product_quantity_pairs:
+                if product not in seen_products or product not in duplicate_products:
+                    unique_pairs.append((product, quantity))
+                    seen_products.add(product)
+            
+            # Assign quantities to products (keeping one of each duplicate)
+            for product, quantity in unique_pairs:
+                op[product] = quantity
+                
+        elif len(product_quantity_pairs) != len(unique_products):
+            # This is a safety check - should not trigger with our new logic
             op['flag'] = 1
-            op['reason'] = f"mismatch between products ({len(productindex)}) and quantities ({len(qtfound)})"
+            op['reason'] = f"mismatch between products and quantities"
+            
+            # Still assign quantities to products (one per unique product)
+            seen_products = set()
+            for product, quantity in product_quantity_pairs:
+                if product not in seen_products:
+                    op[product] = quantity
+                    seen_products.add(product)
         else:
+            # No duplicates - assign quantities and set flag to 0
             op['flag'] = 0
-        
-        # Assign quantities to products
-        for i in range(len(productindex)):
-            if i < len(qtfound):
-                op[productindex[i][0]] = qtfound[i]
-            else:
-                op[productindex[i][0]] = "unknown quantity"
+            seen_products = set()
+            for product, quantity in product_quantity_pairs:
+                if product not in seen_products:
+                    op[product] = quantity
+                    seen_products.add(product)
     else:
         op = {'flag': 1, 'reason': 'No products matched in the text'}
     
