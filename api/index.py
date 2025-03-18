@@ -40,7 +40,8 @@ def parse_products_text(products, text):
         if duplicate_products:
             # Duplicate products found
             op['flag'] = 1
-            op['reason'] = "duplicate products within email"
+            duplicate_str = ", ".join(duplicate_products)
+            op['reason'] = f"duplicate found: {duplicate_str}"
             
             # Assign quantities to products as far as possible
             for i in range(len(productindex)):
