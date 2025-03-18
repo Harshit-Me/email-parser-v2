@@ -18,6 +18,17 @@ def parse_products_text(products, text):
             dest_end = alignment.dest_end
             productindex.append((product, dest_start, dest_end))
 
+    # Check for duplicate products by removing first instance and looking for another
+    duplicate_products = []
+    for product, start, end in productindex:
+        # Create text with this product's first occurrence removed
+        modified_text = text[:start] + " " * (end - start + 1) + text[end+1:]
+        
+        # Try to find the product again in the modified text
+        second_match = partial_ratio_alignment(product, modified_text, processor=utils.default_process, score_cutoff=90)
+        if second_match is not None:
+            duplicate_products.append(product)
+
     def remove_substrings(text, removals):
         removals_sorted = sorted(removals, key=lambda x: x[1], reverse=True)
         for substring, start, end in removals_sorted:
@@ -32,43 +43,26 @@ def parse_products_text(products, text):
         
         op = {}
         
-        # Check for duplicate products
-        product_names = [p[0] for p in productindex]
-        product_counts = Counter(product_names)
-        duplicate_products = [p for p, count in product_counts.items() if count > 1]
-        
+        # Prioritize duplicate product error over quantity mismatch
         if duplicate_products:
-            # Duplicate products found
             op['flag'] = 1
             duplicate_str = ", ".join(duplicate_products)
             op['reason'] = f"duplicate found: {duplicate_str}"
-            
-            # Assign quantities to products as far as possible
-            for i in range(len(productindex)):
-                if i < len(qtfound):
-                    op[productindex[i][0]] = qtfound[i]
-                else:
-                    op[productindex[i][0]] = "unknown quantity"
-        
-        # Check if the number of products discovered matches the number of quantities extracted
+        # Then check quantity mismatch
         elif len(productindex) != len(qtfound):
-            # Mismatch detected - set flag to 1
             op['flag'] = 1
             op['reason'] = f"mismatch between products ({len(productindex)}) and quantities ({len(qtfound)})"
-            
-            # Still assign quantities to products as far as possible
-            for i in range(len(productindex)):
-                if i < len(qtfound):
-                    op[productindex[i][0]] = qtfound[i]
-                else:
-                    op[productindex[i][0]] = "unknown quantity" # For products without matching quantities
         else:
-            # No mismatch - assign quantities and set flag to 0
-            for i in range(len(productindex)):
-                op[productindex[i][0]] = qtfound[i]
             op['flag'] = 0
+        
+        # Assign quantities to products
+        for i in range(len(productindex)):
+            if i < len(qtfound):
+                op[productindex[i][0]] = qtfound[i]
+            else:
+                op[productindex[i][0]] = "unknown quantity"
     else:
-        op = {'flag': 1, 'error': 'No products matched in the text', 'reason': 'No products matched in the text'}
+        op = {'flag': 1, 'reason': 'No products matched in the text'}
     
     return op
 
