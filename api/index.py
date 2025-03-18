@@ -37,7 +37,7 @@ def parse_products_text(products, text):
 
     if productindex:
         text = remove_substrings(text, productindex)
-        quantpattern = r'\d{1,6} units|(\d{1,6})|\d{1,6} unit|\d{1,6} pack|\d{1,6} meter|\d{1,6} kilogram|\d{1,6} l|\d{1,6} liter|\d{1,6} g|\d{1,6} m|\d{1,6} kg|\d{1,6} ml'
+        quantpattern = r'\d{1,6} units|\d{1,6} unit|\d{1,6} pack|\d{1,6} meter|\d{1,6} kilogram|\d{1,6} l|\d{1,6} liter|\d{1,6} g|\d{1,6} m|\d{1,6} kg|\d{1,6} ml|(\d{1,6})'
         qtfound = re.findall(quantpattern, text)
         productindex.sort(key=lambda x: x[1])
         
