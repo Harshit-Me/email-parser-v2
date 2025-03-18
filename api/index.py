@@ -11,22 +11,24 @@ app = Flask(__name__)
 
 def parse_products_text(products, text):
     productindex = []
-    
-    # Sort products by length (longest first) to avoid shorter names matching within longer ones
-    sorted_products = sorted(products, key=len, reverse=True)
-    
-    for product in sorted_products:
-        alignment = partial_ratio_alignment(product, text, processor=utils.default_process, score_cutoff=95)  # Increased threshold
+    for product in products:
+        alignment = partial_ratio_alignment(product, text, processor=utils.default_process, score_cutoff=90)
         if alignment is not None:
             dest_start = alignment.dest_start
             dest_end = alignment.dest_end
             productindex.append((product, dest_start, dest_end))
-    
-    # Check for actual duplicates using exact product names
-    product_names = [p[0] for p in productindex]
-    product_counts = Counter(product_names)
-    duplicate_products = [p for p, count in product_counts.items() if count > 1]
-    
+
+    # Check for duplicate products by removing first instance and looking for another
+    duplicate_products = []
+    for product, start, end in productindex:
+        # Create text with this product's first occurrence removed
+        modified_text = text[:start] + " " * (end - start + 1) + text[end+1:]
+        
+        # Try to find the product again in the modified text
+        second_match = partial_ratio_alignment(product, modified_text, processor=utils.default_process, score_cutoff=90)
+        if second_match is not None:
+            duplicate_products.append(product)
+
     def remove_substrings(text, removals):
         removals_sorted = sorted(removals, key=lambda x: x[1], reverse=True)
         for substring, start, end in removals_sorted:
@@ -34,57 +36,33 @@ def parse_products_text(products, text):
         return text
 
     if productindex:
-        # Create a working copy of text for quantity extraction
-        working_text = text[:]
-        
-        # Extract all quantities with their positions
-        quantity_pattern = r'(\d{1,6} units|\d{1,6} unit|\d{1,6} pack|\d{1,6} meter|\d{1,6} kilogram|\d{1,6} l|\d{1,6} liter|\d{1,6} g|\d{1,6} m|\d{1,6} kg|\d{1,6} ml)'
-        quantity_matches = [(m.group(), m.start(), m.end()) for m in re.finditer(quantity_pattern, working_text)]
-        
-        # Sort products by position in text
+        text = remove_substrings(text, productindex)
+        quantpattern = r'\d{1,6} units|\d{1,6} pack|\d{1,6} meter|\d{1,6} kilogram|\d{1,6} l|\d{1,6} liter|\d{1,6} g|\d{1,6} m|\d{1,6} kg|\d{1,6} ml'
+        qtfound = re.findall(quantpattern, text)
         productindex.sort(key=lambda x: x[1])
         
         op = {}
         
-        # Detect which products are actually in the text
-        products_in_text = set(p[0] for p in productindex)
-        
-        # Map each product to its nearest quantity
-        for product, prod_start, prod_end in productindex:
-            # Find the closest quantity that comes after this product
-            best_quantity = None
-            min_distance = float('inf')
-            
-            for qty, qty_start, qty_end in quantity_matches:
-                if qty_start > prod_start and qty_start - prod_end < min_distance:
-                    min_distance = qty_start - prod_end
-                    best_quantity = qty
-            
-            if best_quantity:
-                op[product] = best_quantity
-            else:
-                op[product] = "unknown quantity"
-        
-        # For products not found in text, set to -1 or suitable placeholder
-        for product in products:
-            if product not in products_in_text:
-                op[product] = -1
-        
-        # Set flag based on duplicates or quantity mismatch
+        # Prioritize duplicate product error over quantity mismatch
         if duplicate_products:
             op['flag'] = 1
             duplicate_str = ", ".join(duplicate_products)
             op['reason'] = f"duplicate found: {duplicate_str}"
-        elif len([p for p in productindex if op.get(p[0]) != "unknown quantity"]) != len(quantity_matches):
+        # Then check quantity mismatch
+        elif len(productindex) != len(qtfound):
             op['flag'] = 1
-            op['reason'] = f"mismatch between products and quantities"
+            op['reason'] = f"mismatch between products ({len(productindex)}) and quantities ({len(qtfound)})"
         else:
             op['flag'] = 0
+        
+        # Assign quantities to products
+        for i in range(len(productindex)):
+            if i < len(qtfound):
+                op[productindex[i][0]] = qtfound[i]
+            else:
+                op[productindex[i][0]] = -1
     else:
         op = {'flag': 1, 'reason': 'No products matched in the text'}
-        # Set all products to -1
-        for product in products:
-            op[product] = -1
     
     return op
 
