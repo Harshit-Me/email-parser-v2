@@ -1,75 +1,101 @@
 from flask import Flask, request, jsonify
-import json
 import re
-from rapidfuzz import fuzz, utils
-from rapidfuzz.fuzz import partial_ratio_alignment
+from rapidfuzz import process, utils
 
 app = Flask(__name__)
 
-def parse_products_text(products, text):
-    productindex = []
+PRODUCT_LIST = [
+    "iPhone 16",
+    "Samsung Galaxy S25",
+    "Google Pixel 9",
+    "MacBook Pro 2025",
+    "Dell XPS 15",
+    "Sony WH-1000XM6",
+    "Bose QuietComfort Ultra",
+    "Apple Watch Series 10"
+]
+
+def parse_products_text(text):
+    product_index = []
+    for product in PRODUCT_LIST:
+        alignment = process.extractOne(
+            product,
+            text,
+            processor=utils.default_process,
+            scorer=process.partial_ratio_alignment,
+            score_cutoff=90
+        )
+        if alignment:
+            matched_product = alignment[0]
+            start = alignment[-1].dest_start
+            end = alignment[-1].dest_end
+            product_index.append((matched_product, start, end))
+
+    # Quantity extraction pattern
+    quant_pattern = r'\b\d{1,6}\s?(?:units|pack|meter|kilogram|l|liter|g|m|kg|ml)\b'
+    quantities = re.findall(quant_pattern, text, flags=re.IGNORECASE)
     
-    for product in products:
-        alignment = partial_ratio_alignment(product, text, processor=utils.default_process, score_cutoff=90)
-        if alignment is not None:
-            dest_start = alignment.dest_start
-            dest_end = alignment.dest_end
-            productindex.append((product, dest_start, dest_end))
+    # Sort products by occurrence position
+    product_index.sort(key=lambda x: x[1])
+    products_ordered = [p[0] for p in product_index]
     
-    def remove_substrings(text, removals):
-        removals_sorted = sorted(removals, key=lambda x: x[1], reverse=True)
-        for substring, start, end in removals_sorted:
-            text = text[:start] + text[end+1:]
-        return text
-    
-    if productindex:
-        text = remove_substrings(text, productindex)
-    
-        quantpattern = r'\d{1,6} units|\d{1,6} pack|\d{1,6} meter|\d{1,6} kilogram|\d{1,6} l|\d{1,6} liter|\d{1,6} g|\d{1,6} m|\d{1,6} kg|\d{1,6} l|\d{1,6} ml'
-        qtfound = re.findall(quantpattern, text)
-        
-        productindex.sort(key=lambda x: x[1])
-        
-        op = {}
-        
-        # Check if number of products doesn't match quantities
-        if len(productindex) != len(qtfound):
-            op['flag'] = 1
-            # Still assign quantities as far as possible
-            for i in range(len(productindex)):
-                if i < len(qtfound):
-                    op[productindex[i][0]] = qtfound[i]
-                else:
-                    op[productindex[i][0]] = "unknown quantity"
+    response = {}
+    errors = []
+
+    # Duplicate product check
+    seen = set()
+    duplicates = set()
+    for product in products_ordered:
+        if product in seen:
+            duplicates.add(product)
         else:
-            # Everything matched correctly
-            for i in range(len(productindex)):
-                op[productindex[i][0]] = qtfound[i]
-            op['flag'] = 0
-    else:
-        op = {'flag': 1, 'error': 'No products matched in the text'}
+            seen.add(product)
     
-    return op
+    if duplicates:
+        errors.append(f"Duplicate products: {', '.join(duplicates)}")
 
-@app.route('/api/parser', methods=['POST'])
-def parse():
-    try:
-        data = request.json
-        
-        # Extract products and text from request body
-        products = data.get('products', [])
-        text = data.get('text', '')
-        
-        if not products or not text:
-            return jsonify({"error": "Missing products or text", "flag": 1}), 400
-        
-        # Process the data
-        result = parse_products_text(products, text)
-        
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e), "flag": 1}), 500
+    # Quantity mismatch check
+    product_count = len(products_ordered)
+    quantity_count = len(quantities)
+    if product_count != quantity_count:
+        errors.append(f"Product-quantity mismatch ({product_count} vs {quantity_count})")
 
-@app.route('/', methods=['GET'])
-def home():
-    return jsonify({"message": "Parser API is running. Send POST requests to /api/parser"})
+    # Build response
+    for idx, product in enumerate(products_ordered):
+        response[product] = quantities[idx] if idx < quantity_count else "Quantity missing"
+
+    # Set flags and logs
+    if errors:
+        response.update({
+            "flag": 1,
+            "log": " | ".join(errors)
+        })
+    else:
+        response["flag"] = 0
+
+    return response if products_ordered else {"flag": 1, "log": "No products detected"}
+
+@app.route('/', methods=['POST'])
+def process_text():
+    data = request.json
+    text = data.get('text', '')
+    result = parse_products_text(text)
+    return jsonify(result)
+
+# Test route for quick verification
+@app.route('/test', methods=['GET'])
+def test_endpoint():
+    sample_text = """Order details:
+    - iPhone 16 100 units
+    - iPhone 16 50 units
+    - Samsung Galaxy S25 200 units
+    Please process this immediately."""
+    
+    result = parse_products_text(sample_text)
+    return jsonify({
+        "test_input": sample_text,
+        "test_output": result
+    })
+
+if __name__ == '__main__':
+    app.run()
